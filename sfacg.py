@@ -2,10 +2,12 @@ import requester as req
 from bs4 import BeautifulSoup as BS
 import re
 import time
-import os,sys
+import os
+import sys
+import json
 import emoji
 
-version = '1.0.0'
+version = '1.1.0'
 
 class UrlUnspecifiedError(Exception):
     def __init__(self,url):
@@ -20,8 +22,16 @@ class VipChapterSkipError(Exception): #因为搞VIP章节太麻烦, 于是干脆
 
     def __str__(self):
         return self.msg
-        
 
+class ApiRequestError(Exception):
+    def __init__(self,code,msg):
+        self.code = code
+        self.msg = msg
+        self._final_msg = 'Code {}: {}'.format(code,msg)
+
+    def __str__(self):
+        return self._final_msg
+        
 def check_login():
     url = req.get_redirect_url('https://passport.sfacg.com/')
     if 'Login.aspx' in url:
@@ -42,7 +52,7 @@ class Chapter(object):
             raise VipChapterSkipError()
         _bookinfo = bs.find('div',class_='crumbs clearfix').find_all('a')[-1]
         self.bookname = _bookinfo.get_text()
-        self.bookid = int(_bookinfo.attrs['href'][7:-1])
+        self.novel_id = int(_bookinfo.attrs['href'][7:-1])
         #章节内容
         _content = bs.find('div',id='ChapterBody')
         if self.is_vip_chapter:
@@ -64,8 +74,8 @@ class Chapter(object):
         self.last_url = _nearby_url[0] if self._check_chapter_url(_nearby_url[0]) else None
         self.next_url = _nearby_url[1] if self._check_chapter_url(_nearby_url[1]) else None
         #目录页与详情页url
-        self.index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(self.bookid)
-        self.main_url = 'https://book.sfacg.com/Novel/{}/'.format(self.bookid)
+        self.index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(self.novel_id)
+        self.main_url = 'https://book.sfacg.com/Novel/{}/'.format(self.novel_id)
 
     def _check_chapter_url(self,url):
         if re.match(r'https?://book\.sfacg\.com/Novel/[0-9]+/[0-9]+/[0-9]+/?$',url) or re.match(r'https?\://book\.sfacg\.com/vip/c/[0-9]+',url):
@@ -81,26 +91,36 @@ class Chapter(object):
             return False
 
 class MainIndex(object):
-    def __init__(self,index_url=None,bookid=None):
-        if bookid:
-            self.url = index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(bookid)
+    def __init__(self,index_url=None,novel_id=None):
+        if novel_id:
+            self.url = index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(novel_id)
         else:
             self.url = index_url
         if not self.url:
-            raise RuntimeError('You must choose one parameter between index_url and bookid.')
+            raise RuntimeError('You must choose one parameter between index_url and novel_id.')
         if not self._check_index_url(index_url):
             raise UrlUnspecifiedError(index_url)
-        source_code = req.get_content_str(self.url)
-        bs = BS(source_code,'html.parser')
 
-        self.bookid = int(re.findall(r'Novel/([0-9]+)/',index_url)[0])
-        self.bookname = bs.find('h1',class_='story-title').get_text()
-        self.index = {c.find('h3',class_='catalog-title').get_text().replace('【'+self.bookname+'】',''):[{
-            'title':i.attrs['title'],
-            'url':'https://book.sfacg.com'+i.attrs['href'],
-            'is_vip_chapter':bool(i.find('span',class_='icn_vip'))
-            } for i in c.find('div',class_='catalog-list').find('ul').find_all('a')]
-                  for c in bs.find('div',class_='wrap s-list').find_all('div',class_='story-catalog')}
+        self.novel_id = int(re.findall(r'Novel/([0-9]+)/',index_url)[0])
+        source_data = json.loads(req.get_content_str('https://api.sfacg.com/novels/{}/dirs?expand=originNeedFireMoney%2'\
+                                                     'Ctags%2CsysTags%typeName'.format(self.novel_id),headers=req.fake_headers_iosapp))
+        if source_data['status']['errorCode'] != 200:
+            raise ApiRequestError(source_data['status']['errorCode'],source_data['status']['msg'])
+        data = source_data['data']
+
+        self.complete_index = [{
+            'volume_id':volume['volumeId'],
+            'title':volume['title'],
+            'chapters':[{
+                'chapter_id':chapter['chapId'],
+                'novel_id':chapter['novelId'],
+                'volume_id':chapter['volumeId'],
+                'title':chapter['title'],
+                'is_vip':chapter['isVip'],
+                'url':'https://book.sfacg.com/Novel/{}/{}/{}/'.format(chapter['novelId'],chapter['volumeId'],chapter['chapId']),
+                'order':chapter['chapOrder']
+                } for chapter in volume['chapterList']]
+            } for volume in data['volumeList']]
 
     def _check_index_url(self,url):
         if re.match(r'https?://book\.sfacg\.com/Novel/[0-9]+/MainIndex/?$',url):
@@ -109,41 +129,38 @@ class MainIndex(object):
             return False
 
 class Book(object):
-    def __init__(self,main_url=None,bookid=None):
-        if bookid:
-            self.url = main_url = 'https://book.sfacg.com/Novel/{}/'.format(bookid)
+    def __init__(self,main_url=None,novel_id=None):
+        if novel_id:
+            self.url = main_url = 'https://book.sfacg.com/Novel/{}/'.format(novel_id)
         else:
             self.url = main_url
         if not self.url:
-            raise RuntimeError('You must choose one parameter between main_url and bookid.')
+            raise RuntimeError('You must choose one parameter between main_url and novel_id.')
         if not self._check_book_url(main_url):
             raise UrlUnspecifiedError(main_url)
-        source_code = req.get_content_str(main_url)
-        bs = BS(source_code,'html.parser')
-
-        self.bookid = int(re.findall(r'Novel/([0-9]+)/?',main_url)[0])
-        _summary = bs.find('div',class_='d-summary')
-        #书名
-        self.bookname = _summary.find('h1',class_='title').find('span',class_='text').get_text()
-        #封面
-        _cover = _summary.find('div',class_='summary-pic')
-        self.cover_url = self.cover_url = _cover.find('img').attrs['src'] if _cover else None
-        #是否包含vip章节
-        self.is_vip = '<span class="tag blue">VIP</span>' in source_code
-        #作者信息
-        _author = _summary.find('div',class_='author-info')
-        self.author_face_url = _author.find('div',class_='author-mask').find('img').attrs['src']
-        self.author = _author.find('div',class_='author-name').get_text().strip()
-        #详细信息
-        _detail = [i.strip().split('：') for i in _summary.find('div',class_='count-detail').get_text('\n').split(maxsplit=3)]
-        self.type = _detail[0][1]
-        self.word_number = _detail[1][1]
-        self.click = _detail[2][1]
-        self.latest_publish_time = _detail[3][1]
-        #简介
-        self.desc = _summary.find('p',class_='introduce').get_text()
-        #相关网址
-        self.index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(self.bookid)
+        #提取novel_id
+        self.novel_id = int(re.findall(r'Novel/([0-9]+)/?',main_url)[0])
+        source_data = json.loads(req.get_content_str('https://api.sfacg.com/novels/{}?expand=chapterCount%2CbigBgBanner%2CbigNovelCover' \
+                                                     '%2CtypeName%2Cintro%2Cfav%2Cticket'.format(novel_id),headers=req.fake_headers_iosapp))
+        if source_data['status']['errorCode'] != 200:
+            raise ApiRequestError(source_data['status']['errorCode'],source_data['status']['msg'])
+        data = source_data['data']
+        
+        self.bookname = data['novelName']
+        self.cover_url = data['expand']['bigNovelCover']
+        self.bgbanner = data['expand']['bigBgBanner']
+        self.is_vip = data['signStatus'] == 'VIP'
+        self.is_finished = data['isFinish']
+        self.score = data['point']
+        self.author_id = data['authorId']
+        self.author = data['authorName']
+        self.type = data['expand']['typeName']
+        self.word_number = data['charCount']
+        self.chapter_number = data['expand']['chapterCount']
+        self.click = data['viewTimes']
+        self.latest_publish_time = data['lastUpdateTime']
+        self.desc = data['expand']['intro']
+        self.index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(self.novel_id)
 
     def _check_book_url(self,url):
         if re.match(r'https?://book\.sfacg\.com/Novel/[0-9]+/?$',url):
@@ -165,13 +182,14 @@ if __name__ == '__main__':
     print('Welcome to SFacgSpyder!')
     print('Current Version:',version)
     print('Sorry, this spyder cannot get the VIP chapters for you yet, what a pity!')
+    print('Special thanks to GitHub user Elaina-Alex for SFacg API.')
     print('Input the chapter url here, and the spyder will start getting chapters at this chapter until meet the VIP chapter.')
-    print('A common chapter url is like this: https://book.sfacg.com/Novel/263035/389168/3319726/')
+    print('A typical chapter url is like this: https://book.sfacg.com/Novel/263035/389168/3319726/')
     url = input('Url: ')
     print('Collecting Data...')
     try:
         chapter = Chapter(url)
-        book = Book(chapter.main_url)
+        book = Book(novel_id=chapter.novel_id)
     except UrlUnspecifiedError as e:
         print(str(e))
     except VipChapterSkipError as e:
@@ -183,9 +201,9 @@ if __name__ == '__main__':
     else:
         print('========== Book Info ==========')
         print('Book Name:',book.bookname)
-        print('Book ID:',book.bookid)
+        print('Book ID:',book.novel_id)
         print('Writer:',book.author)
-        print('Contain VIP Chapter:',book.is_vip)
+        print('Contain VIP Chapter:',{True:'Yes',False:'No'}[book.is_vip])
         print('===============================')
         print('\nWorking Start.')
         if not os.path.exists('./output/'):
@@ -241,5 +259,4 @@ if __name__ == '__main__':
         if input('Open the output folder? (Y/N):').lower == 'y':
             os.system('explorer output')
     finally:
-        os.system('pause')
         sys.exit()

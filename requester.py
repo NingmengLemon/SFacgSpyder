@@ -1,4 +1,3 @@
-from http import cookiejar
 from urllib import request, parse, error
 import os
 import re
@@ -6,27 +5,11 @@ import sys
 import time
 import json
 import zlib,gzip
-import hashlib
-import random
 from io import BytesIO
-import hashlib
 import logging
-import winreg
-
-def get_desktop():
-    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders')
-    return winreg.QueryValueEx(key,"Desktop")[0]
-
-def make_md5(data):
-    if type(data) != bytes:
-        data = bytes(data)
-    res = hashlib.md5(data).hexdigest()
-    logging.debug('Made md5, result='+res)
-    return res
 
 #requester's pre-data
 user_name = os.getlogin()
-cookies = None
 fake_headers_get = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',  # noqa
     'Accept-Charset': 'UTF-8,*;q=0.5',
@@ -40,7 +23,11 @@ fake_headers_post = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.74 Safari/537.36 Edg/79.0.309.43'
     }
 
-local_cookiejar_path = os.path.abspath('./cookies.txt')
+fake_headers_iosapp = {
+        'User-Agent': 'boluobao/4.5.52(iOS;14.0)/appStore',
+        'Host': 'api.sfacg.com',
+        'Authorization': 'Basic YXBpdXNlcjozcyMxLXl0NmUqQWN2QHFlcg=='
+    }
 
 chrome_path = 'C:\\Users\\%s\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe'%user_name
 
@@ -84,11 +71,7 @@ def _dict_to_headers(dict_to_conv):
     return res
 
 def _get_response(url, headers=fake_headers_get):
-    # install cookies
-    if cookies:
-        opener = request.build_opener(request.HTTPCookieProcessor(cookies))
-    else:
-        opener = request.build_opener()
+    opener = request.build_opener()
 
     if headers:
         response = opener.open(
@@ -107,10 +90,7 @@ def _get_response(url, headers=fake_headers_get):
     return response
 
 def _post_request(url,data,headers=fake_headers_post):
-    if cookies:
-        opener = request.build_opener(request.HTTPCookieProcessor(cookies))
-    else:
-        opener = request.build_opener()
+    opener = request.build_opener()
     params = parse.urlencode(data).encode()
     if headers:
         response = opener.open(request.Request(url,data=params,headers=headers), timeout=timeout)
@@ -133,13 +113,6 @@ def post_data_bytes(url,data,headers=fake_headers_post,encoding='utf-8'):
     response = _post_request(url,data,headers)
     return response.data
 
-def get_cookies(url):
-    tmpcookiejar = cookiejar.MozillaCookieJar()
-    handler = request.HTTPCookieProcessor(tmpcookiejar)
-    opener = request.build_opener(handler)
-    opener.open(url)
-    return tmpcookiejar
-
 def get_content_str(url, encoding='utf-8', headers=fake_headers_get):
     content = _get_response(url, headers=headers).data
     data = content.decode(encoding, 'ignore')
@@ -151,27 +124,6 @@ def get_content_bytes(url, headers=fake_headers_get):
 
 def get_redirect_url(url,headers=fake_headers_get):
     return request.urlopen(request.Request(url,headers=headers),None).geturl()
-
-#Cookie Operation
-def clear_cookies():
-    global cookies
-    cookies = None
-    if os.path.exists(local_cookiejar_path):
-        os.remove(local_cookiejar_path)
-    
-def load_local_cookies():
-    global cookies
-    if not os.path.exists(local_cookiejar_path):
-        f = open(local_cookiejar_path,'w+',encoding='utf-8')
-        f.write('# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file!  Do not edit.')
-        f.close()
-    cookies = cookiejar.MozillaCookieJar(local_cookiejar_path)
-    cookies.load()
-
-def refresh_local_cookies():
-    global cookies
-    if cookies:
-        cookies.save()
 
 #Download Operation
 def download_common(url,tofile,progressfunc=None,headers=fake_headers_get):
