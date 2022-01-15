@@ -2,6 +2,13 @@ import re
 import requests
 
 
+def book_id(novel_id: str) -> str:
+    if novel_id.isdigit():
+        return novel_id
+    else:
+        return novel_id.split('/')[-1]
+
+
 class Response:
     def __init__(self):
         self.max_retry = 10
@@ -11,7 +18,7 @@ class Response:
             'Authorization': 'Basic YXBpdXNlcjozcyMxLXl0NmUqQWN2QHFlcg=='
         }
 
-    def get(self, api_url):
+    def get(self, api_url: str):
         for i in range(self.max_retry):
             try:
                 return requests.get(api_url, headers=self.headers).json()
@@ -20,12 +27,8 @@ class Response:
 
 
 class Book:
-    def __init__(self, book_id: str):
-        if book_id.isdigit():
-            self.book_id = book_id
-        else:
-            # url提取book_id
-            self.book_id = book_id.split('/')[-1]
+    def __init__(self, novel_id: str):
+        self.book_id = book_id(novel_id)
         self.book_info_api = 'https://api.sfacg.com/novels/{}?expand=chapterCount%2CbigBgBanner%2CbigNovelCover' \
                              '%2CtypeName%2Cintro%2Cfav%2Cticket'.format(book_id)
         response = Response().get(self.book_info_api)
@@ -47,9 +50,6 @@ class Book:
             self.index_url = 'https://book.sfacg.com/Novel/{}/MainIndex/'.format(self.book_id)
         else:
             print(response.get('status').get('msg'))
-
-    def all_info(self):
-        return vars(self)
 
 
 if __name__ == '__main__':
