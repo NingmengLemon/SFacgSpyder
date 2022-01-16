@@ -105,7 +105,7 @@ class MainIndex:
                 )
         return main_index_urls
 
-        # 直接使用isVip判断即刻，无需将判断复杂化
+        # 直接使用isVip判断即可，无需将判断复杂化
         # 章节url可以通过接口返回值拼接，储存为list遍历下载，不用从html提取
         # self.complete_index = [{
         #     'volume_id': volume['volumeId'],
@@ -126,12 +126,9 @@ class MainIndex:
 
 
 class Book:
-    def __init__(self, novel_id=None):
-        if novel_id is None:
-            print('You must choose one parameter between main_url and novel_id')
-
+    def __init__(self, novel_id):
         # 提取novel_id
-        if 'htttp' not in novel_id:
+        if 'http' not in novel_id:
             self.novel_id = novel_id
         else:
             self.novel_id = int(re.findall(r'/([0-9]+)/?', novel_id)[0])
@@ -181,9 +178,8 @@ if __name__ == '__main__':
     print('Current Version:', version)
     print('Sorry, this spyder cannot get the VIP chapters for you yet, what a pity!')
     print('Special thanks to GitHub user Elaina-Alex for SFacg API.')
-    print('Input the chapter url here, and the spyder will start getting chapters at this chapter until meet the VIP '
+    print('Input the Book ID here, and the spyder will start getting chapters at this chapter until meet the VIP '
           'chapter.')
-    print('A typical chapter url is like this: https://book.sfacg.com/Novel/263035/389168/3319726/')
     novel_id = input('please input the novel_id:')
     print('Collecting Data...')
 
